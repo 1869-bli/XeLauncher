@@ -1,0 +1,15 @@
+# Build output
+build/
+dist/
+*.msi
+
+# MSVC build artifacts
+*.obj
+app.res
+
+# WiX tooling cache
+.wix/
+
+# VS/editor junk
+.vs/
+*.user

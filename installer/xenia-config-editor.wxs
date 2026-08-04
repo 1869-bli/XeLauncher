@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package Name="XeLauncher"
+           Manufacturer="XeLauncher"
+           Version="1.2.1.0"
+           Language="1033"
+           Scope="perUser"
+           UpgradeCode="e3c410ee-2a85-463a-b147-4fc6a7cb1aa6">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of XeLauncher is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Property Id="XENIA_DIR" Value="C:\xenia_canary_windows" Secure="yes" />
+
+    <WixVariable Id="WixUIBannerBmp" Value="installer\images\banner.bmp" />
+    <WixVariable Id="WixUIDialogBmp" Value="installer\images\dialog.bmp" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="XeLauncher">
+        <Component Id="C_App" Guid="ef553535-f51b-47d8-95c3-7359783729a9">
+          <File Id="AppExe" Source="xelauncher.exe" KeyPath="yes" />
+        </Component>
+        <Component Id="C_Defaults" Guid="f9991043-531d-4e23-ab4f-28fd797581a7">
+          <File Id="DefaultsToml" Source="defaults.toml" KeyPath="yes" />
+        </Component>
+        <Component Id="C_Reg" Guid="0817dab2-65bc-4a5e-afed-86406eaa5900">
+          <RegistryKey Root="HKCU" Key="Software\XeLauncher">
+            <RegistryValue Type="string" Name="XeniaDir" Value="[XENIA_DIR]" />
+            <RegistryValue Type="integer" Name="version" Value="1" KeyPath="yes" />
+          </RegistryKey>
+        </Component>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppMenuDir" Name="XeLauncher">
+        <Component Id="C_MenuShortcut" Guid="f22b7a5d-91a7-40c1-aedc-137f9efb5aae">
+          <Shortcut Id="S_Menu"
+                    Name="XeLauncher"
+                    Target="[INSTALLFOLDER]xelauncher.exe"
+                    WorkingDirectory="INSTALLFOLDER" />
+          <RemoveFolder Id="R_MenuDir" On="uninstall" />
+          <RegistryValue Root="HKCU" Key="Software\XeLauncher" Name="menu_shortcut"
+                         Type="integer" Value="1" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="DesktopFolder">
+      <Component Id="C_DesktopShortcut" Guid="bd0839da-6f28-4d15-9668-21761fd73401">
+        <Shortcut Id="S_Desktop"
+                  Name="XeLauncher"
+                  Target="[INSTALLFOLDER]xelauncher.exe"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKCU" Key="Software\XeLauncher" Name="desktop_shortcut"
+                       Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="XeLauncher" Level="1">
+      <ComponentRef Id="C_App" />
+      <ComponentRef Id="C_Defaults" />
+      <ComponentRef Id="C_Reg" />
+      <ComponentRef Id="C_MenuShortcut" />
+      <ComponentRef Id="C_DesktopShortcut" />
+    </Feature>
+
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+
+    <UI>
+      <Dialog Id="XeniaDirDlg" Width="370" Height="270" Title="Xenia Location">
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17"
+                 Default="yes" Text="Next">
+          <Publish Event="NewDialog" Value="VerifyReadyDlg" Order="1" />
+        </Control>
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17"
+                 Text="Back">
+          <Publish Event="NewDialog" Value="InstallDirDlg" Order="1" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17"
+                 Cancel="yes" Text="Cancel">
+          <Publish Event="SpawnDialog" Value="CancelDlg" Order="1" />
+        </Control>
+
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15"
+                 Transparent="yes" NoPrefix="yes"
+                 Text="Choose the folder where Xenia lives." />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15"
+                 Transparent="yes" NoPrefix="yes" Text="Xenia location" />
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44"
+                 TabSkip="no" Text="WixUI_Bmp_Banner" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="373" Height="0" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="373" Height="0" />
+
+        <Control Id="FolderLabel" Type="Text" X="20" Y="60" Width="290" Height="30"
+                 NoPrefix="yes"
+                 Text="Select the folder that contains your Xenia files (xenia_canary.exe and xenia-canary.config.toml). The editor will open your config from there." />
+        <Control Id="Folder" Type="Edit" X="20" Y="100" Width="320" Height="18"
+                 Property="XENIA_DIR" />
+      </Dialog>
+
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg"
+               Order="5" Condition="NOT Installed" />
+      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg"
+               Order="5" Condition="NOT Installed" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="XeniaDirDlg"
+               Order="5" Condition="NOT Installed" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="XeniaDirDlg"
+               Order="5" Condition="NOT Installed" />
+    </UI>
+  </Package>
+</Wix>
