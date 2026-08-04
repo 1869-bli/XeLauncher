@@ -204,6 +204,7 @@ bool Library::load() {
         if (const JsonValue* v = e.get("path")) g.path = v->asString();
         if (const JsonValue* v = e.get("type")) g.type = v->asString();
         if (const JsonValue* v = e.get("cover")) g.cover = v->asString();
+        if (const JsonValue* v = e.get("launchArgs")) g.launchArgs = v->asString();
         if (const JsonValue* v = e.get("lastPlayed")) g.lastPlayed = (long long)v->asNumber();
         if (const JsonValue* v = e.get("launches")) g.launches = (int)v->asNumber();
         if (const JsonValue* v = e.get("playtime")) g.playtimeSec = (long long)v->asNumber();
@@ -223,6 +224,7 @@ bool Library::save() {
         o.obj.emplace_back("path", JsonValue::makeString(g.path));
         o.obj.emplace_back("type", JsonValue::makeString(g.type));
         o.obj.emplace_back("cover", JsonValue::makeString(g.cover));
+        o.obj.emplace_back("launchArgs", JsonValue::makeString(g.launchArgs));
         o.obj.emplace_back("lastPlayed", JsonValue::makeNumber((double)g.lastPlayed));
         o.obj.emplace_back("launches", JsonValue::makeNumber(g.launches));
         o.obj.emplace_back("playtime", JsonValue::makeNumber((double)g.playtimeSec));

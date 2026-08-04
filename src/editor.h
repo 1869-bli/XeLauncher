@@ -92,6 +92,7 @@ struct EditorApp {
     char editNameBuf[256] = {};
     char editTitleBuf[32] = {};
     char editPathBuf[1024] = {};
+    char editArgsBuf[512] = {};
     bool editDialogOpen = false;
     std::string libStatus;
     std::string libStatusErr;

@@ -9,6 +9,7 @@ struct GameEntry {
     std::string path;     // native path to iso/xex/folder
     std::string type;     // "xex" | "iso" | "folder" | "file"
     std::string cover;    // local cover image path, may be empty
+    std::string launchArgs;  // extra args appended to the xenia launch command
     long long lastPlayed = 0;
     int launches = 0;
     long long playtimeSec = 0;

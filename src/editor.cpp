@@ -1416,6 +1416,7 @@ void EditorApp::launchGame(int idx) {
         return;
     }
     std::wstring cmd = L"\"" + xexe.wstring() + L"\" \"" + utf8ToWide(g.path) + L"\"";
+    if (!g.launchArgs.empty()) cmd += L" " + utf8ToWide(g.launchArgs);
     std::vector<wchar_t> buf(cmd.size() + 1);
     memcpy(buf.data(), cmd.data(), (cmd.size() + 1) * sizeof(wchar_t));
     STARTUPINFOW si = {sizeof(si)};
@@ -1637,6 +1638,7 @@ void EditorApp::openEditGame(int idx) {
     snprintf(editNameBuf, sizeof(editNameBuf), "%s", library.games[idx].name.c_str());
     snprintf(editTitleBuf, sizeof(editTitleBuf), "%s", library.games[idx].titleId.c_str());
     snprintf(editPathBuf, sizeof(editPathBuf), "%s", library.games[idx].path.c_str());
+    snprintf(editArgsBuf, sizeof(editArgsBuf), "%s", library.games[idx].launchArgs.c_str());
     editGameIdx = idx;
     editDialogOpen = true;
 }
@@ -1647,6 +1649,7 @@ void EditorApp::saveEditGame() {
     g.name = editNameBuf;
     g.titleId = editTitleBuf;
     g.path = editPathBuf;
+    g.launchArgs = editArgsBuf;
     std::string ext = lowerStr(std::filesystem::path(g.path).extension().string());
     if (g.path.empty())
         g.type = "file";
@@ -2139,6 +2142,9 @@ void EditorApp::drawEditDialog() {
         if (pickOneGameFile(p))
             snprintf(editPathBuf, sizeof(editPathBuf), "%s", p.string().c_str());
     }
+    ImGui::TextUnformatted("Launch arguments (appended to xenia, e.g. --vsync=false):");
+    ImGui::SetNextItemWidth(320.0f);
+    ImGui::InputText("##editargs", editArgsBuf, sizeof(editArgsBuf));
     ImGui::Separator();
     bool ok = strlen(editNameBuf) > 0;
     ImGui::BeginDisabled(!ok);
