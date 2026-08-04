@@ -3,7 +3,7 @@
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
   <Package Name="XeLauncher"
            Manufacturer="XeLauncher"
-           Version="1.2.1.0"
+           Version="1.2.2.0"
            Language="1033"
            Scope="perUser"
            UpgradeCode="e3c410ee-2a85-463a-b147-4fc6a7cb1aa6">

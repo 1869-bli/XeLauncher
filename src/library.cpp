@@ -294,7 +294,10 @@ bool lookupCoverUrl(const std::filesystem::path& dataDir, const std::string& nam
             const JsonValue* r = item.get("Region");
             std::string region = r ? toUpper(r->asString()) : "";
             if (!best) best = &item;
-            if (region.find("NORTH AMERICA") != std::string::npos ||
+            if (region.find("UNITED KINGDOM") != std::string::npos ||
+                region.find("EU") != std::string::npos ||
+                region.find("PAL") != std::string::npos ||
+                region.find("NORTH AMERICA") != std::string::npos ||
                 region.find("UNITED STATES") != std::string::npos ||
                 region.find("WORLD") != std::string::npos ||
                 region.find("USA") != std::string::npos) {
