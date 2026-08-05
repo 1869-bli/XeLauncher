@@ -25,6 +25,7 @@ using Microsoft::WRL::ComPtr;
 #include <cstring>
 #include <ctime>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <sstream>
 #include <thread>
@@ -142,24 +143,25 @@ static long long steadyMs() {
         .count();
 }
 
-// Gamepad A-launch guard: a launch via gamepad A is only accepted once the
-// item has been continuously nav-focused for a couple of frames, so a press
-// that coincides with focus landing on the item (navigating across tiles,
-// returning to a tab, etc.) just selects it instead of launching it.
-static std::map<ImGuiID, int> g_navLastFocus;
-static std::map<ImGuiID, int> g_navFocusStart;
+// Manual library navigation (controller). The tab bar, toolbar filters, the
+// game grid/list and the details sidebar form one flat sequence of targets, so
+// a D-pad press always moves exactly one item (never a whole row) and every
+// control stays reachable.
+enum {
+    kNavTabLibrary = 0, kNavTabConfig, kNavTabCompat,
+    kNavAdd, kNavAddFolder, kNavScan, kNavImport, kNavView, kNavSearch,
+    kNavClear, kNavSort, kNavStatus, kNavFav, kNavRefresh, kNavToolbar,
+    kNavDetailLaunch, kNavDetailFav, kNavDetailShortcut, kNavDetailEdit,
+    kNavDetailPerGame, kNavDetailCover, kNavDetailSetCover, kNavDetailFolder,
+    kNavDetailRemove, kNavDetailLast,
+};
 
-static void navTrackFocus(ImGuiID id) {
-    int fc = ImGui::GetFrameCount();
-    if (g_navLastFocus[id] != fc - 1) g_navFocusStart[id] = fc;  // focus just landed
-    g_navLastFocus[id] = fc;
-}
-
-static bool navLaunchOk(ImGuiID id) {
-    if (!ImGui::IsItemFocused() || !ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false))
-        return false;
-    int start = g_navFocusStart.count(id) ? g_navFocusStart[id] : -1000;
-    return ImGui::GetFrameCount() - start >= 2;
+static void drawNavCursorRect() {
+    ImVec2 min = ImGui::GetItemRectMin();
+    ImVec2 max = ImGui::GetItemRectMax();
+    ImGui::GetWindowDrawList()->AddRect(ImVec2(min.x - 2.0f, min.y - 2.0f),
+                                        ImVec2(max.x + 2.0f, max.y + 2.0f),
+                                        IM_COL32(255, 182, 39, 255), 0.0f, 0, 2.0f);
 }
 
 
@@ -1033,6 +1035,19 @@ void EditorApp::drawMenuBar() {
 
 void EditorApp::draw() {
     ImGuiIO& io = ImGui::GetIO();
+    // The Library tab is driven entirely by the manual controller cursor
+    // (tabs, toolbar, tiles and the details sidebar are one flat target list).
+    // Turn native gamepad nav off there so ImGui can't steal D-pad/A or move
+    // focus on its own; the other tabs keep normal native gamepad navigation,
+    // and popups on the Library tab re-enable it so dialogs stay usable.
+    const bool libraryPopup = tab == 0 && ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup);
+    if (tab == 0 && !libraryPopup)
+        io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
+    else
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    // Advance the manual cursor before the tab bar is drawn so the tab targets
+    // highlight on the exact frame the user moves onto them.
+    if (tab == 0) updateLibraryNav();
     monitorRunning();
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) wantSave = true;
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O, false)) browseOpenFile();
@@ -1049,18 +1064,21 @@ void EditorApp::draw() {
                     ImGuiWindowFlags_NoNavFocus);
 
     if (ImGui::BeginTabBar("maintabs", ImGuiTabBarFlags_NoCloseWithMiddleMouseButton)) {
-        if (ImGui::BeginTabItem("Library")) {
+        if (ImGui::BeginTabItem("Library", nullptr, tab == 0 ? ImGuiTabItemFlags_SetSelected : 0)) {
             tab = 0;
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Config Editor")) {
+        if (tab == 0 && libNavIndex == kNavTabLibrary) drawNavCursorRect();
+        if (ImGui::BeginTabItem("Config Editor", nullptr, tab == 1 ? ImGuiTabItemFlags_SetSelected : 0)) {
             tab = 1;
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Compatibility")) {
+        if (tab == 0 && libNavIndex == kNavTabConfig) drawNavCursorRect();
+        if (ImGui::BeginTabItem("Compatibility", nullptr, tab == 2 ? ImGuiTabItemFlags_SetSelected : 0)) {
             tab = 2;
             ImGui::EndTabItem();
         }
+        if (tab == 0 && libNavIndex == kNavTabCompat) drawNavCursorRect();
         ImGui::EndTabBar();
     }
 
@@ -1704,47 +1722,219 @@ void EditorApp::removeGame(int idx) {
     libStatusErr.clear();
 }
 
+void EditorApp::updateLibraryNav() {
+    // Build the visible, sorted list the cursor moves over. Done before the
+    // tab bar is drawn so the cursor has no one-frame highlight lag.
+    libShown.clear();
+    if (!library.games.empty()) {
+        for (int i = 0; i < (int)library.games.size(); i++) {
+            GameEntry& g = library.games[i];
+            if (!libSearch.empty() && !containsIgnoreCase(g.name, libSearch) &&
+                !containsIgnoreCase(g.titleId, libSearch))
+                continue;
+            if (libOnlyFavorites && !g.fav) continue;
+            CompatEntry ce = compat.find(g.titleId);
+            std::string state = ce.state;
+            bool hasData = !state.empty();
+            if (libCompatFilter == 1 && state != "Playable") continue;
+            if (libCompatFilter == 2 && state != "Gameplay") continue;
+            if (libCompatFilter == 3 && state != "Loads") continue;
+            if (libCompatFilter == 4 && state != "Unplayable") continue;
+            if (libCompatFilter == 5 && hasData) continue;
+            libShown.push_back(i);
+        }
+    }
+    switch (libSort) {
+        case 1:
+            std::stable_sort(libShown.begin(), libShown.end(), [&](int a, int b) {
+                return lowerStr(library.games[a].name) > lowerStr(library.games[b].name);
+            });
+            break;
+        case 2:
+            std::stable_sort(libShown.begin(), libShown.end(), [&](int a, int b) {
+                return library.games[a].lastPlayed > library.games[b].lastPlayed;
+            });
+            break;
+        case 3:
+            std::stable_sort(libShown.begin(), libShown.end(), [&](int a, int b) {
+                return library.games[a].launches > library.games[b].launches;
+            });
+            break;
+        case 4:
+            std::stable_sort(libShown.begin(), libShown.end(), [&](int a, int b) {
+                return library.games[a].playtimeSec > library.games[b].playtimeSec;
+            });
+            break;
+        case 5:
+            std::stable_sort(libShown.begin(), libShown.end(), [&](int a, int b) {
+                if (library.games[a].fav != library.games[b].fav)
+                    return library.games[a].fav > library.games[b].fav;
+                return lowerStr(library.games[a].name) < lowerStr(library.games[b].name);
+            });
+            break;
+        default:
+            std::stable_sort(libShown.begin(), libShown.end(), [&](int a, int b) {
+                return lowerStr(library.games[a].name) < lowerStr(library.games[b].name);
+            });
+            break;
+    }
+
+    // The details sidebar (right panel) is shown whenever a game is selected;
+    // its buttons are the tail of the cursor sequence.
+    const bool showDetails = selectedGame >= 0 && selectedGame < (int)library.games.size();
+    const int detailCount = showDetails ? (kNavDetailLast - kNavDetailLaunch + 1) : 0;
+    const int total = kNavToolbar + (int)libShown.size() + detailCount;
+
+    const bool modalOpen = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup);
+    const int prevNav = libNavIndex;
+    if (libNavIndex >= total) libNavIndex = total - 1;
+
+    if (!modalOpen) {
+        // Movement is one item per step. ImGui's built-in key repeat is much
+        // too fast for a gamepad UI (20 moves/sec after 0.25s), so holding a
+        // D-pad direction for a normal ~0.4s press raced through ~4 tiles.
+        // Repeat is driven manually instead: first move immediately, then wait
+        // a delay and repeat at a calm rate. Some joystick drivers report the
+        // POV as toggling off/on every other frame while the D-pad is held, so
+        // short drop-outs are debounced and never reset the repeat timer.
+        const bool heldDown = ImGui::IsKeyDown(ImGuiKey_GamepadDpadDown) ||
+                              ImGui::IsKeyDown(ImGuiKey_GamepadDpadRight);
+        const bool heldUp = ImGui::IsKeyDown(ImGuiKey_GamepadDpadUp) ||
+                            ImGui::IsKeyDown(ImGuiKey_GamepadDpadLeft);
+        static const float kRepeatDelay = 0.30f;
+        static const float kRepeatRate = 0.13f;
+        const float dt = ImGui::GetIO().DeltaTime;
+
+        const int holdDir = heldDown ? 1 : (heldUp ? -1 : 0);
+        if (holdDir != 0) {
+            libNavZeroFrames = 0;
+            if (libNavHoldDir != holdDir) {
+                // New direction engaged: move on the first frame.
+                libNavHoldDir = holdDir;
+                libNavHoldTime = 0.0f;
+                libNavNextRepeat = kRepeatDelay;
+            } else {
+                libNavHoldTime += dt;
+            }
+        } else if (libNavHoldDir != 0) {
+            // No direction this frame. Debounce a one-frame drop-out so a
+            // flaky pad read can't reset the cursor to "fresh press" every
+            // other frame (which made holding scroll at ~30 moves/sec).
+            if (++libNavZeroFrames < 2) {
+                libNavHoldTime += dt;
+            } else {
+                libNavHoldDir = 0;
+                libNavHoldTime = 0.0f;
+                libNavZeroFrames = 0;
+            }
+        }
+
+        if (libNavHoldDir != 0) {
+            bool move = false;
+            if (libNavHoldTime <= 0.0f)
+                move = true;  // first frame of the press
+            else if (libNavHoldTime >= libNavNextRepeat) {
+                move = true;
+                libNavNextRepeat += kRepeatRate;
+            }
+            if (move) {
+                if (libNavHoldDir > 0) libNavIndex = (libNavIndex + 1) % total;
+                else libNavIndex = (libNavIndex - 1 + total) % total;
+            }
+        }
+    }
+    if (libNavIndex != prevNav) {
+        libNavMoveFrame = ImGui::GetFrameCount();
+        if (libNavIndex >= kNavToolbar) libNeedScroll = true;
+    }
+
+    const int gridIdx = libNavIndex - kNavToolbar;
+    const bool cursorInGrid = gridIdx >= 0 && gridIdx < (int)libShown.size();
+    if (cursorInGrid) selectedGame = libShown[gridIdx];
+
+    // A on a tab target switches tabs (handled before the tab bar draws).
+    if (!modalOpen && libNavA()) {
+        if (libNavIndex == kNavTabLibrary) tab = 0;
+        else if (libNavIndex == kNavTabConfig) tab = 1;
+        else if (libNavIndex == kNavTabCompat) tab = 2;
+    }
+}
+
 void EditorApp::drawLibrary() {
+    // libShown and the cursor position were computed in updateLibraryNav()
+    // before the tab bar drew, so highlights have no one-frame lag.
+    const bool navA = libNavA();
+
+    static const char* kSortLabels[] = {"Name (A-Z)", "Name (Z-A)", "Recently played",
+                                        "Most played", "Playtime", "Favorites first"};
+    static const char* kFilterLabels[] = {"Any status", "Playable", "Gameplay", "Loads",
+                                          "Unplayable", "No compat data"};
+
+    // ---- toolbar (all ImGui-NoNav except the search box so it can take
+    // keyboard focus; driven by the cursor above) ----
+    ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
     if (ImGui::Button("Add Game...")) beginAddGameFiles();
+    if (libNavIndex == kNavAdd && navA) beginAddGameFiles();
+    if (libNavIndex == kNavAdd) drawNavCursorRect();
     ImGui::SameLine();
     if (ImGui::Button("Add Folder...")) beginAddGameFolder();
+    if (libNavIndex == kNavAddFolder && navA) beginAddGameFolder();
+    if (libNavIndex == kNavAddFolder) drawNavCursorRect();
     ImGui::SameLine();
     if (ImGui::Button("Scan Folder...")) beginFolderScan();
+    if (libNavIndex == kNavScan && navA) beginFolderScan();
+    if (libNavIndex == kNavScan) drawNavCursorRect();
     ImGui::SameLine();
     if (ImGui::Button("Import by Title ID...")) openImportDialog();
+    if (libNavIndex == kNavImport && navA) openImportDialog();
+    if (libNavIndex == kNavImport) drawNavCursorRect();
     ImGui::SameLine();
     if (ImGui::Button(libListView ? "Grid View" : "List View")) libListView = !libListView;
+    if (libNavIndex == kNavView && navA) libListView = !libListView;
+    if (libNavIndex == kNavView) drawNavCursorRect();
 
     ImGui::Separator();
+    ImGui::PopItemFlag();
 
     ImGui::TextUnformatted("Search:");
     ImGui::SameLine();
     ImGui::SetNextItemWidth(180.0f);
+    // The box is only nav-able while the cursor sits on it (so A can focus it
+    // for typing); otherwise it's NoNav so native gamepad nav has zero targets
+    // in this window and can never fight the manual cursor. Mouse focus works
+    // regardless of NoNav.
+    if (libNavIndex != kNavSearch) ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
+    if (libNavIndex == kNavSearch && navA) ImGui::SetKeyboardFocusHere();
     ImGui::InputText("##libsearch", &libSearch);
+    if (libNavIndex == kNavSearch) drawNavCursorRect();
+    if (libNavIndex != kNavSearch) ImGui::PopItemFlag();
     ImGui::SameLine();
+
+    ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
     if (ImGui::Button("Clear")) libSearch.clear();
+    if (libNavIndex == kNavClear && navA) libSearch.clear();
+    if (libNavIndex == kNavClear) drawNavCursorRect();
     ImGui::SameLine();
     ImGui::TextUnformatted("Sort:");
     ImGui::SameLine();
-    {
-        static const char* sortLabels[] = {"Name (A-Z)", "Name (Z-A)", "Recently played",
-                                           "Most played", "Playtime", "Favorites first"};
-        ImGui::SetNextItemWidth(130.0f);
-        ImGui::Combo("##libsort", &libSort, sortLabels, 6);
-    }
+    if (ImGui::Button(kSortLabels[libSort], ImVec2(140.0f, 0))) libSort = (libSort + 1) % 6;
+    if (libNavIndex == kNavSort && navA) libSort = (libSort + 1) % 6;
+    if (libNavIndex == kNavSort) drawNavCursorRect();
     ImGui::SameLine();
     ImGui::TextUnformatted("Status:");
     ImGui::SameLine();
-    {
-        static const char* filterLabels[] = {"Any status", "Playable", "Gameplay", "Loads",
-                                             "Unplayable", "No compat data"};
-        ImGui::SetNextItemWidth(120.0f);
-        ImGui::Combo("##libcompat", &libCompatFilter, filterLabels, 6);
-    }
+    if (ImGui::Button(kFilterLabels[libCompatFilter], ImVec2(130.0f, 0)))
+        libCompatFilter = (libCompatFilter + 1) % 6;
+    if (libNavIndex == kNavStatus && navA) libCompatFilter = (libCompatFilter + 1) % 6;
+    if (libNavIndex == kNavStatus) drawNavCursorRect();
     ImGui::SameLine();
     ImGui::Checkbox("Only favorites", &libOnlyFavorites);
+    if (libNavIndex == kNavFav && navA) libOnlyFavorites = !libOnlyFavorites;
+    if (libNavIndex == kNavFav) drawNavCursorRect();
     ImGui::SameLine();
     if (ImGui::Button("Refresh compat data")) compat.startFetch();
+    if (libNavIndex == kNavRefresh && navA) compat.startFetch();
+    if (libNavIndex == kNavRefresh) drawNavCursorRect();
     ImGui::SameLine();
     if (compat.busy)
         ImGui::TextDisabled("Updating compatibility data...");
@@ -1753,6 +1943,7 @@ void EditorApp::drawLibrary() {
                             compat.source.c_str());
     else
         ImGui::TextDisabled("Compatibility data not loaded");
+    ImGui::PopItemFlag();
 
     ImGui::Separator();
 
@@ -1765,64 +1956,13 @@ void EditorApp::drawLibrary() {
         return;
     }
 
-    std::vector<int> shown;
-    for (int i = 0; i < (int)library.games.size(); i++) {
-        GameEntry& g = library.games[i];
-        if (!libSearch.empty() && !containsIgnoreCase(g.name, libSearch) &&
-            !containsIgnoreCase(g.titleId, libSearch))
-            continue;
-        if (libOnlyFavorites && !g.fav) continue;
-        CompatEntry ce = compat.find(g.titleId);
-        std::string state = ce.state;
-        bool hasData = !state.empty();
-        if (libCompatFilter == 1 && state != "Playable") continue;
-        if (libCompatFilter == 2 && state != "Gameplay") continue;
-        if (libCompatFilter == 3 && state != "Loads") continue;
-        if (libCompatFilter == 4 && state != "Unplayable") continue;
-        if (libCompatFilter == 5 && hasData) continue;
-        shown.push_back(i);
-    }
-    switch (libSort) {
-        case 1:
-            std::stable_sort(shown.begin(), shown.end(), [&](int a, int b) {
-                return lowerStr(library.games[a].name) > lowerStr(library.games[b].name);
-            });
-            break;
-        case 2:
-            std::stable_sort(shown.begin(), shown.end(), [&](int a, int b) {
-                return library.games[a].lastPlayed > library.games[b].lastPlayed;
-            });
-            break;
-        case 3:
-            std::stable_sort(shown.begin(), shown.end(), [&](int a, int b) {
-                return library.games[a].launches > library.games[b].launches;
-            });
-            break;
-        case 4:
-            std::stable_sort(shown.begin(), shown.end(), [&](int a, int b) {
-                return library.games[a].playtimeSec > library.games[b].playtimeSec;
-            });
-            break;
-        case 5:
-            std::stable_sort(shown.begin(), shown.end(), [&](int a, int b) {
-                if (library.games[a].fav != library.games[b].fav)
-                    return library.games[a].fav > library.games[b].fav;
-                return lowerStr(library.games[a].name) < lowerStr(library.games[b].name);
-            });
-            break;
-        default:
-            std::stable_sort(shown.begin(), shown.end(), [&](int a, int b) {
-                return lowerStr(library.games[a].name) < lowerStr(library.games[b].name);
-            });
-            break;
-    }
-
     bool showDetails = selectedGame >= 0 && selectedGame < (int)library.games.size();
     ImGui::BeginChild("librarygrid", ImVec2(0, -22.0f), false, ImGuiChildFlags_NavFlattened);
     ImGui::BeginChild("libleft", ImVec2(showDetails ? -300.0f : 0.0f, 0), false, ImGuiChildFlags_NavFlattened);
-    if (shown.empty()) {
+    if (libShown.empty()) {
         ImGui::TextDisabled("No games match your filters.");
     } else if (libListView) {
+        ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
         if (ImGui::BeginTable("liblist", 6,
                               ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV |
                                   ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable)) {
@@ -1833,19 +1973,27 @@ void EditorApp::drawLibrary() {
             ImGui::TableSetupColumn("Playtime", ImGuiTableColumnFlags_WidthFixed, 90.0f);
             ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 52.0f);
             ImGui::TableHeadersRow();
-            for (int idx : shown) drawGameListRow(idx);
+            int r = 0;
+            for (int idx : libShown) {
+                drawGameListRow(idx, libNavIndex == kNavToolbar + r);
+                r++;
+            }
             ImGui::EndTable();
         }
+        ImGui::PopItemFlag();
     } else {
         float avail = ImGui::GetContentRegionAvail().x;
         float spacing = ImGui::GetStyle().ItemSpacing.x;
         int cols = std::max(1, (int)(avail / 165.0f));
         float tileW = (avail - spacing * (cols - 1)) / (float)cols;
         int i = 0;
-        for (int idx : shown) {
+        for (int idx : libShown) {
             if (i % cols != 0) ImGui::SameLine(0.0f, spacing);
+            bool cur = libNavIndex == kNavToolbar + i;
             i++;
-            drawGameTile(idx, tileW);
+            ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
+            drawGameTile(idx, tileW, cur);
+            ImGui::PopItemFlag();
         }
     }
     ImGui::EndChild();
@@ -1860,11 +2008,11 @@ void EditorApp::drawLibrary() {
                                           : ImVec4(1.0f, 0.5f, 0.4f, 1.0f);
         ImGui::TextColored(col, "%s", libStatus.c_str());
     } else {
-        ImGui::TextDisabled("Double-click to launch. Controller: stick/D-pad navigate, A play.");
+        ImGui::TextDisabled("Double-click to launch. Controller: stick/D-pad navigate one tile, A select.");
     }
 }
 
-void EditorApp::drawGameListRow(int idx) {
+void EditorApp::drawGameListRow(int idx, bool isCursor) {
     GameEntry& g = library.games[idx];
     ImGui::PushID(idx);
     ImGui::TableNextRow();
@@ -1875,11 +2023,17 @@ void EditorApp::drawGameListRow(int idx) {
         selectedGame = idx;
         if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) launchGame(idx);
     }
-    if (ImGui::IsItemFocused()) {
-        navTrackFocus(ImGui::GetItemID());
-        selectedGame = idx;
+    if (isCursor) {
+        drawNavCursorRect();
+        if (libNavA()) launchGame(idx);
+        if (libNeedScroll) {
+            // Only scroll when the cursor item is actually outside the visible
+            // area; otherwise every D-pad press would re-center the grid and
+            // make it jump ~half a page.
+            if (!ImGui::IsItemVisible()) ImGui::SetScrollHereY(0.5f);
+            libNeedScroll = false;
+        }
     }
-    if (navLaunchOk(ImGui::GetItemID())) launchGame(idx);
     gameContextMenu(idx);
     ImGui::TableSetColumnIndex(1);
     ImGui::TextDisabled("%s", g.titleId.c_str());
@@ -1904,9 +2058,9 @@ void EditorApp::drawGameListRow(int idx) {
 void EditorApp::drawDetailsPanel() {
     if (selectedGame < 0 || selectedGame >= (int)library.games.size()) return;
     GameEntry& g = library.games[selectedGame];
-    // The details panel is informational: keep gamepad nav out of it so an A
-    // press (e.g. while browsing details) can't land on the "Launch" button
-    // and launch the selected game. It stays fully usable with the mouse.
+    // The details buttons are the tail of the manual cursor sequence. The
+    // child keeps ImGuiWindowFlags_NoNav so native gamepad nav can never land
+    // on "Launch" and launch the game while the cursor is elsewhere.
     ImGui::BeginChild("details", ImVec2(300, 0), true, ImGuiWindowFlags_NoNav);
     ID3D11ShaderResourceView* srv = tex.get(g.cover);
     if (srv) {
@@ -1945,27 +2099,56 @@ void EditorApp::drawDetailsPanel() {
     if (runningIdx == selectedGame && runningProc)
         ImGui::TextColored(ImVec4(0.6f, 0.9f, 0.6f, 1.0f), "Running now");
     ImGui::Separator();
-    float bw = ImGui::GetContentRegionAvail().x;
-    if (ImGui::Button("Launch", ImVec2(bw, 0))) launchGame(selectedGame);
-    if (ImGui::Button(g.fav ? "Remove from favorites" : "Add to favorites", ImVec2(bw, 0)))
-        toggleGameFav(selectedGame);
-    if (ImGui::Button("Create Desktop Shortcut", ImVec2(bw, 0)))
-        createDesktopShortcut(selectedGame);
-    if (ImGui::Button("Edit...", ImVec2(bw, 0))) openEditGame(selectedGame);
-    if (!g.titleId.empty() && ImGui::Button("Open Per-Game Config", ImVec2(bw, 0)))
-        openPerGameConfig(selectedGame);
-    if (ImGui::Button("Download Cover", ImVec2(bw, 0))) downloadCoverFor(selectedGame);
-    if (ImGui::Button("Set Cover Image...", ImVec2(bw, 0))) pickCoverFor(selectedGame);
-    if (!g.path.empty() && ImGui::Button("Open Containing Folder", ImVec2(bw, 0))) {
+
+    // Flat-sequence index of the first details button; the kNavDetailX values
+    // plus this base give the real cursor index for each button.
+    const int dBase = kNavToolbar + (int)libShown.size() - kNavDetailLaunch;
+    const bool navA = libNavA();
+    auto cursorBtn = [&](int slot, bool enabled, const std::function<void()>& fn) {
+        if (libNavIndex == slot) {
+            if (libNeedScroll) {
+                if (!ImGui::IsItemVisible()) ImGui::SetScrollHereY(0.5f);
+                libNeedScroll = false;
+            }
+            if (enabled && navA) fn();
+            drawNavCursorRect();
+        }
+    };
+    auto openFolder = [&]() {
         std::filesystem::path dir = std::filesystem::path(g.path).parent_path();
         if (dir.empty()) dir = ".";
         ShellExecuteW(nullptr, L"open", dir.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-    }
+    };
+
+    float bw = ImGui::GetContentRegionAvail().x;
+    if (ImGui::Button("Launch", ImVec2(bw, 0))) launchGame(selectedGame);
+    cursorBtn(kNavDetailLaunch + dBase, true, [&]() { launchGame(selectedGame); });
+    if (ImGui::Button(g.fav ? "Remove from favorites" : "Add to favorites", ImVec2(bw, 0)))
+        toggleGameFav(selectedGame);
+    cursorBtn(kNavDetailFav + dBase, true, [&]() { toggleGameFav(selectedGame); });
+    if (ImGui::Button("Create Desktop Shortcut", ImVec2(bw, 0)))
+        createDesktopShortcut(selectedGame);
+    cursorBtn(kNavDetailShortcut + dBase, true, [&]() { createDesktopShortcut(selectedGame); });
+    if (ImGui::Button("Edit...", ImVec2(bw, 0))) openEditGame(selectedGame);
+    cursorBtn(kNavDetailEdit + dBase, true, [&]() { openEditGame(selectedGame); });
+    ImGui::BeginDisabled(g.titleId.empty());
+    if (ImGui::Button("Open Per-Game Config", ImVec2(bw, 0))) openPerGameConfig(selectedGame);
+    ImGui::EndDisabled();
+    cursorBtn(kNavDetailPerGame + dBase, !g.titleId.empty(), [&]() { openPerGameConfig(selectedGame); });
+    if (ImGui::Button("Download Cover", ImVec2(bw, 0))) downloadCoverFor(selectedGame);
+    cursorBtn(kNavDetailCover + dBase, true, [&]() { downloadCoverFor(selectedGame); });
+    if (ImGui::Button("Set Cover Image...", ImVec2(bw, 0))) pickCoverFor(selectedGame);
+    cursorBtn(kNavDetailSetCover + dBase, true, [&]() { pickCoverFor(selectedGame); });
+    ImGui::BeginDisabled(g.path.empty());
+    if (ImGui::Button("Open Containing Folder", ImVec2(bw, 0))) openFolder();
+    ImGui::EndDisabled();
+    cursorBtn(kNavDetailFolder + dBase, !g.path.empty(), openFolder);
     if (ImGui::Button("Remove from Library", ImVec2(bw, 0))) confirmRemoveIdx = selectedGame;
+    cursorBtn(kNavDetailRemove + dBase, true, [&]() { confirmRemoveIdx = selectedGame; });
     ImGui::EndChild();
 }
 
-void EditorApp::drawGameTile(int idx, float w) {
+void EditorApp::drawGameTile(int idx, float w, bool isCursor) {
     GameEntry& g = library.games[idx];
     float h = w * 1.4f;
     ImGui::BeginGroup();
@@ -1978,11 +2161,17 @@ void EditorApp::drawGameTile(int idx, float w) {
         selectedGame = idx;
     bool hovered = ImGui::IsItemHovered();
     bool active = ImGui::IsItemActive();
-    if (ImGui::IsItemFocused()) {
-        navTrackFocus(ImGui::GetItemID());
-        selectedGame = idx;
+    if (isCursor) {
+        drawNavCursorRect();
+        if (libNavA()) launchGame(idx);
+        if (libNeedScroll) {
+            // Only scroll when the cursor item is actually outside the visible
+            // area; otherwise every D-pad press would re-center the grid and
+            // make it jump ~half a page.
+            if (!ImGui::IsItemVisible()) ImGui::SetScrollHereY(0.5f);
+            libNeedScroll = false;
+        }
     }
-    if (navLaunchOk(ImGui::GetItemID())) launchGame(idx);
 
     if (dbl) launchGame(idx);
     gameContextMenu(idx);
@@ -2029,6 +2218,16 @@ void EditorApp::drawGameTile(int idx, float w) {
 
     ImGui::PopID();
     ImGui::EndGroup();
+}
+
+bool EditorApp::libNavA() const {
+    // A-launch guard: ignore presses for the first couple of frames after the
+    // cursor moves, so holding D-pad and tapping A can't fire while the cursor
+    // is still travelling between targets. No auto-repeat: holding A must not
+    // relaunch a game or cycle a filter repeatedly.
+    if (ImGui::GetFrameCount() - libNavMoveFrame < 2) return false;
+    if (ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup)) return false;
+    return ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
 }
 
 void EditorApp::drawScanDialog() {

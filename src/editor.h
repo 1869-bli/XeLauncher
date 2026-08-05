@@ -103,6 +103,19 @@ struct EditorApp {
     int libSort = 0;          // 0 name A-Z, 1 name Z-A, 2 recent, 3 most played, 4 playtime, 5 favs first
     int libCompatFilter = 0;  // 0 any, 1 playable, 2 gameplay, 3 loads, 4 unplayable, 5 no data
 
+    // Manual library navigation (controller): tabs, toolbar filters, the game
+    // grid/list and the details sidebar are one flat sequence of targets, so a
+    // D-pad press always moves exactly one item (never a whole row) and the
+    // filters/sidebar stay reachable.
+    int libNavIndex = 0;   // 0..(kNavToolbar-1) = tabs+toolbar, then grid/list, then details
+    int libNavMoveFrame = -1000;  // frame the cursor last moved (A-launch guard)
+    int libNavHoldDir = 0;        // held cursor direction: 0 none, +1 down/right, -1 up/left
+    float libNavHoldTime = 0.0f;  // seconds the current direction has been held
+    float libNavNextRepeat = 0.0f;  // hold-time threshold for the next auto-repeat move
+    int libNavZeroFrames = 0;     // consecutive frames with no direction (debounce drop-outs)
+    bool libNeedScroll = false;   // scroll the grid to the cursor this frame
+    std::vector<int> libShown;    // filtered+sorted game indexes the cursor moves over
+
     // Playtime tracking
     void* runningProc = nullptr;  // HANDLE to the running xenia process
     int runningIdx = -1;
@@ -154,11 +167,13 @@ struct EditorApp {
     void drawRow(SettingInfo& s);
     void drawMenuBar();
     void draw();
+    void updateLibraryNav();
     void drawLibrary();
     void drawConfigEditor();
     void drawCompat();
-    void drawGameTile(int idx, float w);
-    void drawGameListRow(int idx);
+    void drawGameTile(int idx, float w, bool isCursor);
+    void drawGameListRow(int idx, bool isCursor);
+    bool libNavA() const;
     void drawDetailsPanel();
     void gameContextMenu(int idx);
     void toggleGameFav(int idx);

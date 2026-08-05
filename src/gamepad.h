@@ -10,7 +10,7 @@ public:
     GamepadPoll();
     ~GamepadPoll();
     void init(HINSTANCE hInstance, HWND hwnd);
-    void newFrame(bool xinputActive);
+    void newFrame(bool xinputActive, bool appActive);
     void shutdown();
     bool connected() const;
 
@@ -21,6 +21,7 @@ public:
         DWORD pov = 0;
         int lastError = 0;
         DWORD x = 0, y = 0, z = 0, r = 0;
+        float cx = 0, cy = 0, cz = 0, cr = 0;  // auto-calibrated stick centers
     };
     Debug debug() const;
 
