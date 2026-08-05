@@ -142,6 +142,27 @@ static long long steadyMs() {
         .count();
 }
 
+// Gamepad A-launch guard: a launch via gamepad A is only accepted once the
+// item has been continuously nav-focused for a couple of frames, so a press
+// that coincides with focus landing on the item (navigating across tiles,
+// returning to a tab, etc.) just selects it instead of launching it.
+static std::map<ImGuiID, int> g_navLastFocus;
+static std::map<ImGuiID, int> g_navFocusStart;
+
+static void navTrackFocus(ImGuiID id) {
+    int fc = ImGui::GetFrameCount();
+    if (g_navLastFocus[id] != fc - 1) g_navFocusStart[id] = fc;  // focus just landed
+    g_navLastFocus[id] = fc;
+}
+
+static bool navLaunchOk(ImGuiID id) {
+    if (!ImGui::IsItemFocused() || !ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false))
+        return false;
+    int start = g_navFocusStart.count(id) ? g_navFocusStart[id] : -1000;
+    return ImGui::GetFrameCount() - start >= 2;
+}
+
+
 static std::string formatPlaytime(long long sec) {
     if (sec < 60) return std::to_string(sec) + "s";
     long long m = sec / 60;
@@ -1393,6 +1414,10 @@ void EditorApp::finishAddGame() {
 
 void EditorApp::launchGame(int idx) {
     if (idx < 0 || idx >= (int)library.games.size()) return;
+    // Debounce: a held/queued gamepad A (or a double-press across a focus
+    // change) must not relaunch a game immediately after one was started.
+    if (steadyMs() - lastLaunchMs < 1000) return;
+    lastLaunchMs = steadyMs();
     GameEntry& g = library.games[idx];
     if (g.path.empty()) {
         libStatus = g.name + " has no game file yet - click Edit to set one.";
@@ -1432,6 +1457,9 @@ void EditorApp::launchGame(int idx) {
         g.launches++;
         g.lastPlayed = (long long)time(nullptr);
         library.save();
+        // Get the launcher out of the way and stop it from capturing the
+        // gamepad while xenia is running.
+        if (hwnd) ShowWindow((HWND)hwnd, SW_MINIMIZE);
         libStatus = "Launched: " + g.name;
         libStatusErr.clear();
     } else {
@@ -1790,8 +1818,8 @@ void EditorApp::drawLibrary() {
     }
 
     bool showDetails = selectedGame >= 0 && selectedGame < (int)library.games.size();
-    ImGui::BeginChild("librarygrid", ImVec2(0, -22.0f), false);
-    ImGui::BeginChild("libleft", ImVec2(showDetails ? -300.0f : 0.0f, 0), false);
+    ImGui::BeginChild("librarygrid", ImVec2(0, -22.0f), false, ImGuiChildFlags_NavFlattened);
+    ImGui::BeginChild("libleft", ImVec2(showDetails ? -300.0f : 0.0f, 0), false, ImGuiChildFlags_NavFlattened);
     if (shown.empty()) {
         ImGui::TextDisabled("No games match your filters.");
     } else if (libListView) {
@@ -1832,7 +1860,7 @@ void EditorApp::drawLibrary() {
                                           : ImVec4(1.0f, 0.5f, 0.4f, 1.0f);
         ImGui::TextColored(col, "%s", libStatus.c_str());
     } else {
-        ImGui::TextDisabled("Double-click to launch. Controller: stick/D-pad navigate, A play, Start menu.");
+        ImGui::TextDisabled("Double-click to launch. Controller: stick/D-pad navigate, A play.");
     }
 }
 
@@ -1847,9 +1875,11 @@ void EditorApp::drawGameListRow(int idx) {
         selectedGame = idx;
         if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) launchGame(idx);
     }
-    if (ImGui::IsItemFocused()) selectedGame = idx;
-    if (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false))
-        launchGame(idx);
+    if (ImGui::IsItemFocused()) {
+        navTrackFocus(ImGui::GetItemID());
+        selectedGame = idx;
+    }
+    if (navLaunchOk(ImGui::GetItemID())) launchGame(idx);
     gameContextMenu(idx);
     ImGui::TableSetColumnIndex(1);
     ImGui::TextDisabled("%s", g.titleId.c_str());
@@ -1874,7 +1904,10 @@ void EditorApp::drawGameListRow(int idx) {
 void EditorApp::drawDetailsPanel() {
     if (selectedGame < 0 || selectedGame >= (int)library.games.size()) return;
     GameEntry& g = library.games[selectedGame];
-    ImGui::BeginChild("details", ImVec2(300, 0), true);
+    // The details panel is informational: keep gamepad nav out of it so an A
+    // press (e.g. while browsing details) can't land on the "Launch" button
+    // and launch the selected game. It stays fully usable with the mouse.
+    ImGui::BeginChild("details", ImVec2(300, 0), true, ImGuiWindowFlags_NoNav);
     ID3D11ShaderResourceView* srv = tex.get(g.cover);
     if (srv) {
         float avail = ImGui::GetContentRegionAvail().x;
@@ -1938,16 +1971,18 @@ void EditorApp::drawGameTile(int idx, float w) {
     ImGui::BeginGroup();
     ImGui::PushID(idx);
 
-    ImGui::InvisibleButton("cover", ImVec2(w, h));
+    ImGui::InvisibleButton("cover", ImVec2(w, h), ImGuiButtonFlags_EnableNav);
     bool dbl = ImGui::IsItemClicked(ImGuiMouseButton_Left) &&
                ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left) || ImGui::IsItemClicked(ImGuiMouseButton_Right))
         selectedGame = idx;
     bool hovered = ImGui::IsItemHovered();
     bool active = ImGui::IsItemActive();
-    if (ImGui::IsItemFocused()) selectedGame = idx;
-    if (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false))
-        launchGame(idx);
+    if (ImGui::IsItemFocused()) {
+        navTrackFocus(ImGui::GetItemID());
+        selectedGame = idx;
+    }
+    if (navLaunchOk(ImGui::GetItemID())) launchGame(idx);
 
     if (dbl) launchGame(idx);
     gameContextMenu(idx);

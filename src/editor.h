@@ -107,6 +107,8 @@ struct EditorApp {
     void* runningProc = nullptr;  // HANDLE to the running xenia process
     int runningIdx = -1;
     long long runningStartMs = 0;
+    long long lastLaunchMs = -100000;  // steady-clock ms of last game launch (debounce)
+    void* hwnd = nullptr;              // launcher window handle, set by main
 
     // Folder scan
     std::vector<std::filesystem::path> scanQueue;

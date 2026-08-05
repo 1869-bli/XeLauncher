@@ -11,15 +11,19 @@
 #include <string>
 
 #include "editor.h"
+#include "gamepad.h"
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg,
                                                              WPARAM wParam, LPARAM lParam);
 
 static EditorApp g_app;
+static GamepadPoll g_gamepad;
 static ID3D11Device* g_pd3dDevice = nullptr;
 static ID3D11DeviceContext* g_pd3dContext = nullptr;
 static IDXGISwapChain* g_pSwapChain = nullptr;
 static ID3D11RenderTargetView* g_pRTV = nullptr;
+
+static bool g_showPadDebug = false;
 
 static void CreateRenderTarget() {
     ID3D11Texture2D* pBackBuffer = nullptr;
@@ -182,8 +186,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dContext);
 
+    g_gamepad.init(hInstance, hwnd);
+
     g_app.device = g_pd3dDevice;
     g_app.tex.device = g_pd3dDevice;
+    g_app.hwnd = hwnd;
     g_app.init();
 
     bool running = true;
@@ -198,9 +205,40 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
 
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
+        {
+            // The Win32 backend sets HasGamepad when an XInput pad is present;
+            // otherwise fall back to the winmm joystick poller for PS pads.
+            ImGuiIO& io = ImGui::GetIO();
+            const bool xinputActive = (io.BackendFlags & ImGuiBackendFlags_HasGamepad) != 0;
+            g_gamepad.newFrame(xinputActive);
+            if (xinputActive)
+                io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
+            else
+                io.BackendFlags = (io.BackendFlags & ~ImGuiBackendFlags_HasGamepad) |
+                                  (g_gamepad.connected() ? ImGuiBackendFlags_HasGamepad : 0);
+        }
         ImGui::NewFrame();
 
         g_app.draw();
+
+        if (g_showPadDebug) {
+            GamepadPoll::Debug d = g_gamepad.debug();
+            ImGuiIO& dio = ImGui::GetIO();
+            ImGui::SetNextWindowPos(ImVec2(8, 24), ImGuiCond_Always);
+            ImGui::SetNextWindowBgAlpha(0.85f);
+            ImGui::Begin("pad-dbg", nullptr,
+                         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                             ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
+                             ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoFocusOnAppearing);
+            ImGui::Text("pad present=%d xinput=%d err=%d", d.present, d.xinputActive, d.lastError);
+            ImGui::Text("buttons=%08X pov=%04X", d.buttons, d.pov);
+            ImGui::Text("X=%u Y=%u Z=%u R=%u", d.x, d.y, d.z, d.r);
+            ImGui::Text("HasGamepad=%d NavEnableGp=%d",
+                        (dio.BackendFlags & ImGuiBackendFlags_HasGamepad) != 0,
+                        (dio.ConfigFlags & ImGuiConfigFlags_NavEnableGamepad) != 0);
+            ImGui::Text("NavActive=%d NavVisible=%d", dio.NavActive, dio.NavVisible);
+            ImGui::End();
+        }
 
         ImGui::Render();
         const float clearColor[4] = {0.12f, 0.12f, 0.14f, 1.0f};
@@ -213,6 +251,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();
+    g_gamepad.shutdown();
 
     CleanupRenderTarget();
     g_app.shutdown();
