@@ -108,6 +108,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
     io.IniFilename = _strdup((editorDataDir() / "imgui.ini").string().c_str());
 
     ImGui::StyleColorsDark();

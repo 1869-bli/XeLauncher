@@ -1832,7 +1832,7 @@ void EditorApp::drawLibrary() {
                                           : ImVec4(1.0f, 0.5f, 0.4f, 1.0f);
         ImGui::TextColored(col, "%s", libStatus.c_str());
     } else {
-        ImGui::TextDisabled("Double-click a game to launch. Right-click for options.");
+        ImGui::TextDisabled("Double-click to launch. Controller: stick/D-pad navigate, A play, Start menu.");
     }
 }
 
@@ -1847,6 +1847,9 @@ void EditorApp::drawGameListRow(int idx) {
         selectedGame = idx;
         if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) launchGame(idx);
     }
+    if (ImGui::IsItemFocused()) selectedGame = idx;
+    if (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false))
+        launchGame(idx);
     gameContextMenu(idx);
     ImGui::TableSetColumnIndex(1);
     ImGui::TextDisabled("%s", g.titleId.c_str());
@@ -1942,6 +1945,9 @@ void EditorApp::drawGameTile(int idx, float w) {
         selectedGame = idx;
     bool hovered = ImGui::IsItemHovered();
     bool active = ImGui::IsItemActive();
+    if (ImGui::IsItemFocused()) selectedGame = idx;
+    if (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false))
+        launchGame(idx);
 
     if (dbl) launchGame(idx);
     gameContextMenu(idx);
