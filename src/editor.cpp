@@ -1064,22 +1064,40 @@ void EditorApp::draw() {
                     ImGuiWindowFlags_NoNavFocus);
 
     if (ImGui::BeginTabBar("maintabs", ImGuiTabBarFlags_NoCloseWithMiddleMouseButton)) {
-        if (ImGui::BeginTabItem("Library", nullptr, tab == 0 ? ImGuiTabItemFlags_SetSelected : 0)) {
-            tab = 0;
+        // `tab` is the single source of truth: the controller cursor sets it in
+        // updateLibraryNav(), mouse clicks adopt it below. We must NOT copy the
+        // tab bar's return value into `tab` every frame (it lags ImGui's commit
+        // by one frame and would stomp controller-driven changes), and we must
+        // not pass SetSelected while ImGui is mid-transition (the old tab's
+        // request would snap the selection back). So SetSelected is only passed
+        // when our requested tab differs from what ImGui is showing, and the
+        // return value is only adopted when no request is pending (real click).
+        static int prevVisibleTab = -1;
+        const bool pendingTabRequest = tab != prevVisibleTab;
+        int visibleTab = -1;
+        if (ImGui::BeginTabItem("Library", nullptr,
+                pendingTabRequest && tab == 0 ? ImGuiTabItemFlags_SetSelected : 0)) {
+            visibleTab = 0;
             ImGui::EndTabItem();
         }
         if (tab == 0 && libNavIndex == kNavTabLibrary) drawNavCursorRect();
-        if (ImGui::BeginTabItem("Config Editor", nullptr, tab == 1 ? ImGuiTabItemFlags_SetSelected : 0)) {
-            tab = 1;
+        if (ImGui::BeginTabItem("Config Editor", nullptr,
+                pendingTabRequest && tab == 1 ? ImGuiTabItemFlags_SetSelected : 0)) {
+            visibleTab = 1;
             ImGui::EndTabItem();
         }
         if (tab == 0 && libNavIndex == kNavTabConfig) drawNavCursorRect();
-        if (ImGui::BeginTabItem("Compatibility", nullptr, tab == 2 ? ImGuiTabItemFlags_SetSelected : 0)) {
-            tab = 2;
+        if (ImGui::BeginTabItem("Compatibility", nullptr,
+                pendingTabRequest && tab == 2 ? ImGuiTabItemFlags_SetSelected : 0)) {
+            visibleTab = 2;
             ImGui::EndTabItem();
         }
         if (tab == 0 && libNavIndex == kNavTabCompat) drawNavCursorRect();
         ImGui::EndTabBar();
+        if (visibleTab < 0) visibleTab = tab;
+        if (!pendingTabRequest && visibleTab != tab)
+            tab = visibleTab;  // user clicked a tab with the mouse
+        prevVisibleTab = visibleTab;
     }
 
     ImGui::BeginChild("mainbody", ImVec2(0, 0), false, ImGuiWindowFlags_NoScrollbar);

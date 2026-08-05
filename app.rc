@@ -1,8 +1,8 @@
 1 ICON "app.ico"
 
 1 VERSIONINFO
- FILEVERSION 1,2,6,11
- PRODUCTVERSION 1,2,6,11
+ FILEVERSION 1,2,6,14
+ PRODUCTVERSION 1,2,6,14
  FILEFLAGSMASK 0x3fL
  FILEFLAGS 0x0L
  FILEOS 0x40004L
@@ -15,11 +15,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "XeLauncher"
             VALUE "FileDescription", "XeLauncher"
-            VALUE "FileVersion", "1.2.6.11"
+            VALUE "FileVersion", "1.2.6.14"
             VALUE "InternalName", "xelauncher"
             VALUE "OriginalFilename", "xelauncher.exe"
             VALUE "ProductName", "XeLauncher"
-            VALUE "ProductVersion", "1.2.6.11"
+            VALUE "ProductVersion", "1.2.6.14"
         END
     END
     BLOCK "VarFileInfo"
