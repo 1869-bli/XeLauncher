@@ -164,6 +164,11 @@ static void drawNavCursorRect() {
                                         IM_COL32(255, 182, 39, 255), 0.0f, 0, 2.0f);
 }
 
+// Theme-aware placeholder colors for game tiles that have no cover art.
+static ImU32 tilePhBg(bool light) { return light ? IM_COL32(222, 222, 226, 255) : IM_COL32(28, 28, 30, 255); }
+static ImU32 tilePhBorder(bool light) { return light ? IM_COL32(192, 192, 198, 255) : IM_COL32(45, 45, 50, 255); }
+static ImU32 tilePhText(bool light) { return light ? IM_COL32(140, 140, 148, 255) : IM_COL32(120, 120, 130, 255); }
+
 
 static std::string formatPlaytime(long long sec) {
     if (sec < 60) return std::to_string(sec) + "s";
@@ -458,11 +463,14 @@ void EditorApp::loadAppSettings() {
     if (it != kv.end() && !it->second.empty()) xeniaDir = it->second;
     it = kv.find("defaults_file");
     if (it != kv.end() && !it->second.empty()) defaultsPath = it->second;
+    it = kv.find("light_theme");
+    if (it != kv.end()) lightTheme = it->second == "1";
 }
 
 void EditorApp::saveAppSettings() {
     std::string s = "xenia_dir=" + xeniaDir.string() + "\n";
     s += "defaults_file=" + defaultsPath.string() + "\n";
+    s += "light_theme=" + std::string(lightTheme ? "1" : "0") + "\n";
     stringToFile(editorDataDir() / "editor.settings.txt", s);
 }
 
@@ -1023,6 +1031,12 @@ void EditorApp::drawMenuBar() {
                 for (auto& s : settings)
                     if (s.category == selectedCategory && s.modified) resetSetting(s);
             if (ImGui::MenuItem("Reset all changed...")) confirmResetAll = true;
+            ImGui::Separator();
+            const bool wasLight = lightTheme;
+            if (ImGui::MenuItem("Light theme", nullptr, &lightTheme) && lightTheme != wasLight) {
+                applyAppTheme(lightTheme);
+                saveAppSettings();
+            }
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Help")) {
@@ -2022,8 +2036,11 @@ void EditorApp::drawLibrary() {
     ImGui::EndChild();
 
     if (!libStatus.empty()) {
-        ImVec4 col = libStatusErr.empty() ? ImVec4(0.6f, 0.85f, 0.65f, 1.0f)
-                                          : ImVec4(1.0f, 0.5f, 0.4f, 1.0f);
+        ImVec4 col = libStatusErr.empty()
+                         ? (lightTheme ? ImVec4(0.12f, 0.52f, 0.24f, 1.0f)
+                                       : ImVec4(0.6f, 0.85f, 0.65f, 1.0f))
+                         : (lightTheme ? ImVec4(0.78f, 0.16f, 0.10f, 1.0f)
+                                       : ImVec4(1.0f, 0.5f, 0.4f, 1.0f));
         ImGui::TextColored(col, "%s", libStatus.c_str());
     } else {
         ImGui::TextDisabled("Double-click to launch. Controller: stick/D-pad navigate one tile, A select.");
@@ -2090,13 +2107,13 @@ void EditorApp::drawDetailsPanel() {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 p0 = ImGui::GetItemRectMin();
         ImVec2 p1 = ImGui::GetItemRectMax();
-        dl->AddRectFilled(p0, p1, IM_COL32(28, 28, 30, 255));
-        dl->AddRect(p0, p1, IM_COL32(45, 45, 50, 255));
+        dl->AddRectFilled(p0, p1, tilePhBg(lightTheme));
+        dl->AddRect(p0, p1, tilePhBorder(lightTheme));
         std::string letter = g.name.empty() ? "?" : g.name.substr(0, 1);
         ImVec2 ts = ImGui::CalcTextSize(letter.c_str());
         dl->AddText(ImVec2(p0.x + (p1.x - p0.x - ts.x) * 0.5f,
                            p0.y + (p1.y - p0.y - ts.y) * 0.5f),
-                    IM_COL32(120, 120, 130, 255), letter.c_str());
+                    tilePhText(lightTheme), letter.c_str());
     }
     ImGui::TextUnformatted(g.name.c_str());
     if (!g.titleId.empty()) ImGui::TextDisabled("Title ID: %s", g.titleId.c_str());
@@ -2115,7 +2132,9 @@ void EditorApp::drawDetailsPanel() {
     ImGui::TextDisabled("Launches: %d", g.launches);
     if (g.playtimeSec) ImGui::TextDisabled("Playtime: %s", formatPlaytime(g.playtimeSec).c_str());
     if (runningIdx == selectedGame && runningProc)
-        ImGui::TextColored(ImVec4(0.6f, 0.9f, 0.6f, 1.0f), "Running now");
+        ImGui::TextColored(lightTheme ? ImVec4(0.12f, 0.52f, 0.24f, 1.0f)
+                                      : ImVec4(0.6f, 0.9f, 0.6f, 1.0f),
+                           "Running now");
     ImGui::Separator();
 
     // Flat-sequence index of the first details button; the kNavDetailX values
@@ -2203,18 +2222,19 @@ void EditorApp::drawGameTile(int idx, float w, bool isCursor) {
     if (srv) {
         dl->AddImage(srv, p0, p1);
     } else {
-        dl->AddRectFilled(p0, p1, IM_COL32(28, 28, 30, 255));
-        dl->AddRect(p0, p1, IM_COL32(45, 45, 50, 255));
+        dl->AddRectFilled(p0, p1, tilePhBg(lightTheme));
+        dl->AddRect(p0, p1, tilePhBorder(lightTheme));
         std::string letter;
         if (!g.name.empty()) letter = g.name.substr(0, 1);
         if (!letter.empty()) {
             ImVec2 ts = ImGui::CalcTextSize(letter.c_str());
             dl->AddText(ImVec2(p0.x + (p1.x - p0.x - ts.x) * 0.5f,
                                p0.y + (p1.y - p0.y - ts.y) * 0.5f),
-                        IM_COL32(120, 120, 130, 255), letter.c_str());
+                        tilePhText(lightTheme), letter.c_str());
         }
     }
-    if (hovered && !active) dl->AddRect(p0, p1, IM_COL32(255, 255, 255, 90), 0, 0, 2.0f);
+    if (hovered && !active)
+        dl->AddRect(p0, p1, lightTheme ? IM_COL32(0, 0, 0, 50) : IM_COL32(255, 255, 255, 90), 0, 0, 2.0f);
     if (sel) dl->AddRect(p0, p1, IM_COL32(255, 182, 39, 255), 0, 0, 3.0f);
     if (g.fav) dl->AddText(ImVec2(p1.x - 22.0f, p0.y + 4), IM_COL32(255, 210, 60, 255), ICON_FAV);
 

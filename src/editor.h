@@ -46,6 +46,10 @@ struct FileEntry {
 
 std::filesystem::path editorDataDir();
 
+// Defined in main.cpp: re-applies the ImGui palette (dark or light) plus the
+// app's shared style tweaks and the swapchain clear color.
+void applyAppTheme(bool light);
+
 struct EditorApp {
     ConfigFile defaults;
     ConfigFile global;
@@ -75,6 +79,7 @@ struct EditorApp {
     bool showAbout = false;
     std::string statusMsg;
     bool settingsDirty = false;
+    bool lightTheme = false;  // 0 = dark (default), 1 = light; persisted in editor.settings.txt
 
     // Launcher / library
     ID3D11Device* device = nullptr;
