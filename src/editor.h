@@ -46,7 +46,7 @@ struct FileEntry {
 
 std::filesystem::path editorDataDir();
 
-// Defined in main.cpp: re-applies the ImGui palette (dark or light) plus the
+// Defined in theme.cpp: re-applies the ImGui palette (dark or light) plus the
 // app's shared style tweaks and the swapchain clear color.
 void applyAppTheme(bool light);
 

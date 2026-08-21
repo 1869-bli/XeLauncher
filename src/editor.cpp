@@ -1,4 +1,5 @@
 #include "editor.h"
+#include "theme.h"
 
 #include "net.h"
 
@@ -159,15 +160,38 @@ enum {
 static void drawNavCursorRect() {
     ImVec2 min = ImGui::GetItemRectMin();
     ImVec2 max = ImGui::GetItemRectMax();
-    ImGui::GetWindowDrawList()->AddRect(ImVec2(min.x - 2.0f, min.y - 2.0f),
-                                        ImVec2(max.x + 2.0f, max.y + 2.0f),
-                                        IM_COL32(255, 182, 39, 255), 0.0f, 0, 2.0f);
+    ImU32 accent = accentColorU32(themeIsLight());
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(min, max, (accent & 0x00FFFFFFu) | (30u << 24), 5.0f);
+    dl->AddRect(ImVec2(min.x - 2.0f, min.y - 2.0f), ImVec2(max.x + 2.0f, max.y + 2.0f),
+                accent, 6.0f, 0, 2.5f);
 }
 
-// Theme-aware placeholder colors for game tiles that have no cover art.
-static ImU32 tilePhBg(bool light) { return light ? IM_COL32(222, 222, 226, 255) : IM_COL32(28, 28, 30, 255); }
-static ImU32 tilePhBorder(bool light) { return light ? IM_COL32(192, 192, 198, 255) : IM_COL32(45, 45, 50, 255); }
-static ImU32 tilePhText(bool light) { return light ? IM_COL32(140, 140, 148, 255) : IM_COL32(120, 120, 130, 255); }
+// Theme-aware placeholder rendering for game tiles that have no cover art.
+static void drawPlaceholderTile(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const char* letter,
+                                bool light) {
+    const float r = 10.0f;
+    ImU32 tl = light ? IM_COL32(216, 224, 234, 255) : IM_COL32(26, 35, 50, 255);
+    ImU32 br = light ? IM_COL32(197, 208, 222, 255) : IM_COL32(14, 20, 31, 255);
+    dl->AddRectFilledMultiColor(p0, p1, tl, tl, br, br);
+    if (letter && *letter) {
+        ImVec2 center((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f);
+        float wm = (p1.y - p0.y) * 0.42f;
+        const char* mark = u8"\u24CD";
+        ImVec2 ms = ImGui::CalcTextSize(mark);
+        float wmScale = wm / ms.y;
+        dl->AddText(nullptr, ms.y * wmScale,
+                    ImVec2(center.x - ms.x * wmScale * 0.5f, center.y - wm * 0.62f),
+                    light ? IM_COL32(150, 162, 178, 70) : IM_COL32(120, 140, 170, 40),
+                    mark);
+        ImVec2 ts = ImGui::CalcTextSize(letter);
+        dl->AddText(ImVec2(center.x - ts.x * 0.5f, center.y + wm * 0.10f),
+                    light ? IM_COL32(110, 122, 138, 255) : IM_COL32(150, 160, 175, 255),
+                    letter);
+    }
+    dl->AddRect(p0, p1, light ? IM_COL32(160, 172, 188, 255) : IM_COL32(52, 64, 84, 255),
+                r);
+}
 
 
 static std::string formatPlaytime(long long sec) {
@@ -1049,6 +1073,7 @@ void EditorApp::drawMenuBar() {
 
 void EditorApp::draw() {
     ImGuiIO& io = ImGui::GetIO();
+    drawBackgroundFx(lightTheme);
     // The Library tab is driven entirely by the manual controller cursor
     // (tabs, toolbar, tiles and the details sidebar are one flat target list).
     // Turn native gamepad nav off there so ImGui can't steal D-pad/A or move
@@ -1072,10 +1097,12 @@ void EditorApp::draw() {
     ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(vp->WorkPos);
     ImGui::SetNextWindowSize(vp->WorkSize);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0, 0, 0, 0));
     ImGui::Begin("##app", nullptr,
                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus |
                     ImGuiWindowFlags_NoNavFocus);
+    ImGui::PopStyleColor();
 
     if (ImGui::BeginTabBar("maintabs", ImGuiTabBarFlags_NoCloseWithMiddleMouseButton)) {
         // `tab` is the single source of truth: the controller cursor sets it in
@@ -1133,7 +1160,7 @@ void EditorApp::draw() {
 }
 
 void EditorApp::drawConfigEditor() {
-    if (ImGui::Button("Save", ImVec2(70, 0)) || wantSave) {
+    if (gradientButton("Save", ImVec2(70, 0), true) || wantSave) {
         wantSave = false;
         saveTarget();
     }
@@ -1905,7 +1932,7 @@ void EditorApp::drawLibrary() {
     // ---- toolbar (all ImGui-NoNav except the search box so it can take
     // keyboard focus; driven by the cursor above) ----
     ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
-    if (ImGui::Button("Add Game...")) beginAddGameFiles();
+    if (gradientButton("Add Game...", ImVec2(0, 0), true)) beginAddGameFiles();
     if (libNavIndex == kNavAdd && navA) beginAddGameFiles();
     if (libNavIndex == kNavAdd) drawNavCursorRect();
     ImGui::SameLine();
@@ -1981,10 +2008,26 @@ void EditorApp::drawLibrary() {
 
     if (library.games.empty()) {
         ImVec2 sz = ImGui::GetContentRegionAvail();
-        ImGui::SetCursorPos(ImVec2(sz.x * 0.5f - 140.0f, sz.y * 0.5f - 34.0f));
-        ImGui::TextUnformatted("Your library is empty.");
-        ImGui::SetCursorPos(ImVec2(sz.x * 0.5f - 200.0f, sz.y * 0.5f - 14.0f));
-        ImGui::TextDisabled("Add a game to get started, or use Scan Folder... to import a whole collection.");
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImVec2 origin = ImGui::GetCursorScreenPos();
+        const char* mark = u8"\u24CD";
+        float wmSize = 150.0f;
+        ImVec2 ms = ImGui::CalcTextSize(mark);
+        float wmScale = wmSize / ms.y;
+        ImU32 wmCol = lightTheme ? IM_COL32(140, 155, 175, 36) : IM_COL32(120, 150, 190, 26);
+        dl->AddText(nullptr, ms.y * wmScale,
+                    ImVec2(origin.x + sz.x * 0.5f - ms.x * wmScale * 0.5f,
+                           origin.y + sz.y * 0.5f - wmSize * 0.72f),
+                    wmCol, mark);
+        const char* line1 = "Your library is empty.";
+        const char* line2 =
+            "Add a game to get started, or use Scan Folder... to import a whole collection.";
+        ImVec2 s1 = ImGui::CalcTextSize(line1);
+        ImVec2 s2 = ImGui::CalcTextSize(line2);
+        ImGui::SetCursorPos(ImVec2(sz.x * 0.5f - s1.x * 0.5f, sz.y * 0.5f - 30.0f));
+        ImGui::TextUnformatted(line1);
+        ImGui::SetCursorPos(ImVec2(sz.x * 0.5f - s2.x * 0.5f, sz.y * 0.5f - 6.0f));
+        ImGui::TextDisabled("%s", line2);
         return;
     }
 
@@ -2107,13 +2150,8 @@ void EditorApp::drawDetailsPanel() {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 p0 = ImGui::GetItemRectMin();
         ImVec2 p1 = ImGui::GetItemRectMax();
-        dl->AddRectFilled(p0, p1, tilePhBg(lightTheme));
-        dl->AddRect(p0, p1, tilePhBorder(lightTheme));
         std::string letter = g.name.empty() ? "?" : g.name.substr(0, 1);
-        ImVec2 ts = ImGui::CalcTextSize(letter.c_str());
-        dl->AddText(ImVec2(p0.x + (p1.x - p0.x - ts.x) * 0.5f,
-                           p0.y + (p1.y - p0.y - ts.y) * 0.5f),
-                    tilePhText(lightTheme), letter.c_str());
+        drawPlaceholderTile(dl, p0, p1, letter.c_str(), lightTheme);
     }
     ImGui::TextUnformatted(g.name.c_str());
     if (!g.titleId.empty()) ImGui::TextDisabled("Title ID: %s", g.titleId.c_str());
@@ -2131,10 +2169,20 @@ void EditorApp::drawDetailsPanel() {
     if (g.lastPlayed) ImGui::TextDisabled("Last played: %s", formatDate(g.lastPlayed).c_str());
     ImGui::TextDisabled("Launches: %d", g.launches);
     if (g.playtimeSec) ImGui::TextDisabled("Playtime: %s", formatPlaytime(g.playtimeSec).c_str());
-    if (runningIdx == selectedGame && runningProc)
+    if (runningIdx == selectedGame && runningProc) {
+        float pulse = 0.55f + 0.45f * sinf((float)ImGui::GetTime() * 3.2f);
+        ImVec2 tp = ImGui::GetCursorScreenPos();
+        float fs = ImGui::GetFontSize();
+        ImU32 accent = accentColorU32(lightTheme);
+        ImGui::GetWindowDrawList()->AddCircleFilled(
+            ImVec2(tp.x + 6.0f, tp.y + fs * 0.5f), 4.5f,
+            (accent & 0x00FFFFFFu) | ((ImU32)(140.0f + 110.0f * pulse) << 24), 16);
+        ImGui::Dummy(ImVec2(18.0f, 0.0f));
+        ImGui::SameLine(0.0f, 0.0f);
         ImGui::TextColored(lightTheme ? ImVec4(0.12f, 0.52f, 0.24f, 1.0f)
                                       : ImVec4(0.6f, 0.9f, 0.6f, 1.0f),
                            "Running now");
+    }
     ImGui::Separator();
 
     // Flat-sequence index of the first details button; the kNavDetailX values
@@ -2158,7 +2206,7 @@ void EditorApp::drawDetailsPanel() {
     };
 
     float bw = ImGui::GetContentRegionAvail().x;
-    if (ImGui::Button("Launch", ImVec2(bw, 0))) launchGame(selectedGame);
+    if (gradientButton("Launch", ImVec2(bw, 0), true)) launchGame(selectedGame);
     cursorBtn(kNavDetailLaunch + dBase, true, [&]() { launchGame(selectedGame); });
     if (ImGui::Button(g.fav ? "Remove from favorites" : "Add to favorites", ImVec2(bw, 0)))
         toggleGameFav(selectedGame);
@@ -2219,23 +2267,27 @@ void EditorApp::drawGameTile(int idx, float w, bool isCursor) {
     bool sel = selectedGame == idx;
 
     ID3D11ShaderResourceView* srv = tex.get(g.cover);
+    const float r = 10.0f;
     if (srv) {
-        dl->AddImage(srv, p0, p1);
+        dl->AddImageRounded(srv, p0, p1, ImVec2(0, 0), ImVec2(1, 1),
+                            IM_COL32(255, 255, 255, 255), r);
     } else {
-        dl->AddRectFilled(p0, p1, tilePhBg(lightTheme));
-        dl->AddRect(p0, p1, tilePhBorder(lightTheme));
         std::string letter;
         if (!g.name.empty()) letter = g.name.substr(0, 1);
-        if (!letter.empty()) {
-            ImVec2 ts = ImGui::CalcTextSize(letter.c_str());
-            dl->AddText(ImVec2(p0.x + (p1.x - p0.x - ts.x) * 0.5f,
-                               p0.y + (p1.y - p0.y - ts.y) * 0.5f),
-                        tilePhText(lightTheme), letter.c_str());
-        }
+        drawPlaceholderTile(dl, p0, p1, letter.c_str(), lightTheme);
     }
-    if (hovered && !active)
-        dl->AddRect(p0, p1, lightTheme ? IM_COL32(0, 0, 0, 50) : IM_COL32(255, 255, 255, 90), 0, 0, 2.0f);
-    if (sel) dl->AddRect(p0, p1, IM_COL32(255, 182, 39, 255), 0, 0, 3.0f);
+    ImU32 accent = accentColorU32(lightTheme);
+    if (hovered && !active) {
+        dl->AddRectFilled(p0, p1, IM_COL32(255, 255, 255, 16), r);
+        dl->AddRect(p0, p1,
+                    lightTheme ? IM_COL32(0, 0, 0, 60) : IM_COL32(255, 255, 255, 80), r,
+                    0, 1.5f);
+    }
+    if (isCursor || sel) {
+        dl->AddRect(ImVec2(p0.x - 3.0f, p0.y - 3.0f), ImVec2(p1.x + 3.0f, p1.y + 3.0f),
+                    (accent & 0x00FFFFFFu) | (50u << 24), r + 3.0f, 0, 4.0f);
+        dl->AddRect(p0, p1, accent, r, 0, isCursor ? 3.0f : 2.5f);
+    }
     if (g.fav) dl->AddText(ImVec2(p1.x - 22.0f, p0.y + 4), IM_COL32(255, 210, 60, 255), ICON_FAV);
 
     CompatEntry ce = compat.find(g.titleId);
@@ -2243,8 +2295,8 @@ void EditorApp::drawGameTile(int idx, float w, bool isCursor) {
         ImVec2 ts = ImGui::CalcTextSize(ce.state.c_str());
         ImVec2 bp0(p0.x + 4, p0.y + 4);
         ImVec2 bp1(bp0.x + ts.x + 10, bp0.y + ts.y + 5);
-        dl->AddRectFilled(bp0, bp1, IM_COL32(0, 0, 0, 190), 3.0f);
-        dl->AddRect(bp0, bp1, compatColor(ce.state), 3.0f, 0, 1.5f);
+        dl->AddRectFilled(bp0, bp1, IM_COL32(0, 0, 0, 190), 5.0f);
+        dl->AddRect(bp0, bp1, compatColor(ce.state), 5.0f, 0, 1.5f);
         dl->AddText(ImVec2(bp0.x + 5, bp0.y + 2), compatColor(ce.state), ce.state.c_str());
     }
 

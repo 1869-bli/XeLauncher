@@ -5,7 +5,7 @@ if exist build rmdir /s /q build
 mkdir build
 rc /nologo app.rc
 cl /nologo /std:c++17 /EHsc /O2 /W3 /utf-8 /DUNICODE /D_UNICODE /Isrc /Ithird_party\imgui /Ithird_party\imgui\backends /Ithird_party\imgui\misc\cpp ^
-  src\main.cpp src\editor.cpp src\config.cpp src\gamepad.cpp ^
+  src\main.cpp src\editor.cpp src\theme.cpp src\config.cpp src\gamepad.cpp ^
   src\json.cpp src\net.cpp src\library.cpp src\compat.cpp src\texture.cpp ^
   third_party\imgui\imgui.cpp third_party\imgui\imgui_draw.cpp ^
   third_party\imgui\imgui_tables.cpp third_party\imgui\imgui_widgets.cpp ^
